@@ -8,10 +8,12 @@ Extract images from a pdf file, possibly accounting for softmask and compositing
 '''
 
 parser = argparse.ArgumentParser(description='Extract images from a pdf')
+# positional
+parser.add_argument('file', type=str, help='pdf filename')
 parser.add_argument('page', type=int, help='page number')
+# optional
 parser.add_argument('-image', type=str, default='all', required=False, help='image name to extract, or "all" to extract all (default)')
 parser.add_argument('-bg', type=int, nargs='+', default=[255], required=False, help='background color if a mask is present. 0=black 255=white, or 3/4 integer R G B (A)')
-parser.add_argument('file', type=str, help='pdf filename')
 parser.add_argument('--debug', action='store_true', help='print pdf node debug information')
 parser.add_argument('--list', action='store_true', help='print list of images on the page instead of extracting images')
 
@@ -22,7 +24,7 @@ pdf_file = open(args.file, 'rb')
 pdf_reader = PyPDF2.PdfFileReader(pdf_file)
 
 page = pdf_reader.pages[args.page - 1]
-x_object = page["/Resources"]["/XObject"].get_object()
+x_object = page['/Resources']['/XObject'].get_object()
 images = []
 list_mode = args.list
 if len(args.bg) == 1:
@@ -35,69 +37,76 @@ else:
     bg = (255, 255, 255, 255)
 
 for obj in x_object:
-    if x_object[obj]["/Subtype"] == "/Image":
+    if x_object[obj]['/Subtype'] == '/Image':
         if list_mode:
             images += [obj[1:]]
             continue
         elif args.image != 'all' and obj[1:] != args.image:
             continue
 
-        size = (x_object[obj]["/Width"], x_object[obj]["/Height"])
-        data = x_object[obj].get_data()
+        image_node = x_object[obj]
         if args.debug:
-            print(f'Node: {x_object[obj]}')
+            print(f'Node: {image_node}')
+
+        size = (image_node['/Width'], image_node['/Height'])
 
         mask = None
-        if "/SMask" in x_object[obj]:
-            maskNode = x_object[obj]["/SMask"]
+        if '/SMask' in image_node:
+            mask_node = image_node['/SMask']
             if args.debug:
-                print(f'  MaskNode: {maskNode}')
-                print(f'  MaskColorSpace: {maskNode["/ColorSpace"]}')
-            if maskNode['/ColorSpace'] == "/DeviceGray":
-                mask_color = "L"
+                print(f'  MaskNode: {mask_node}')
+                print(f'  MaskColorSpace: {mask_node["/ColorSpace"]}')
+            if mask_node['/ColorSpace'] == '/DeviceGray':
+                mask_color = 'L'
             else:
                 mask_color = None
-            if mask_color is not None and maskNode['/Filter'] == "/FlateDecode":
-                mask = Image.frombytes(mask_color, size, maskNode.get_data())
-            elif mask_color is not None and maskNode['/Filter'] == "/DCTDecode":
-                mask = Image.frombytes(mask_color, size, maskNode.get_data(), "jpeg", mask_color, mask_color)
-            elif mask_color is not None and maskNode['/Filter'] == '/JPXDecode':
-                mask = Image.frombytes(mask_color, size, maskNode.get_data(), "jpeg2k", mask_color, mask_color)
 
-        colorspace = x_object[obj]["/ColorSpace"]
-        # for icc color profiles use whatever the "alternate" is set to
+            # the additional arguments for specific decoders (jpeg etc) are poorly documented. Best
+            # bet is find the relevant method in the PIL decode.c and look for the PyArg_ParseTuple call
+            # https://github.com/python-pillow/Pillow/blob/main/src/decode.c
+            if mask_color is not None and mask_node['/Filter'] == '/FlateDecode':
+                mask = Image.frombytes(mask_color, size, mask_node.get_data())
+            elif mask_color is not None and mask_node['/Filter'] == '/DCTDecode':
+                mask = Image.frombytes(mask_color, size, mask_node.get_data(), 'jpeg', mask_color, mask_color)
+            elif mask_color is not None and mask_node['/Filter'] == '/JPXDecode':
+                mask = Image.frombytes(mask_color, size, mask_node.get_data(), 'jpeg2k', mask_color, mask_color)
+
+        colorspace = image_node['/ColorSpace']
+        # for icc color profiles use whatever the 'alternate' is set to
         # rather than trying to decode icc
-        if "/ICCBased" in colorspace:
+        if '/ICCBased' in colorspace:
             colorspace = colorspace[1].get_object()
-            if "/Alternate" in colorspace:
-                colorspace = colorspace["/Alternate"]
+            if '/Alternate' in colorspace:
+                colorspace = colorspace['/Alternate']
             else:
-                colorspace = "/DeviceRGB"  # uhh idfk
+                colorspace = '/DeviceRGB'  # uhh idfk
         if args.debug:
             print(f'ColorSpace: {colorspace}')
 
-        # Here are the fucking image modes:
+        # Here are the fucking image modes, again poorly documented
         # https://github.com/python-pillow/Pillow/blob/main/src/libImaging/Unpack.c
-        if colorspace == "/DeviceRGB":
-            img_color = "RGB"
+        if colorspace == '/DeviceRGB':
+            img_color = 'RGB'
         elif '/Indexed' in colorspace:
             # png, palettized
-            img_color = "P"
+            img_color = 'P'
         else:
-            img_color = "RGB"  # uhhh sure
+            img_color = 'RGB'  # uhhh sure
 
         img = None
-        filename = ""
-        if x_object[obj]["/Filter"] == "/FlateDecode":
-            img = Image.frombytes(img_color, size, data)
-            filename = obj[1:] + ".png"
-        elif x_object[obj]["/Filter"] == "/DCTDecode":
-            # how the fuck am i supposed to know these are inverted? idfk
-            img = Image.frombytes(img_color, size, data, "jpeg", img_color, img_color + ";I")
-            filename = obj[1:] + ".jpg"
-        elif x_object[obj]["/Filter"] == "/JPXDecode":
-            img = Image.frombytes(img_color, size, data, "jpeg2k", img_color, img_color + ";I")
-            filename = obj[1:] + ".jp2"
+        filename = ''
+
+        # see note above about frombytes additional args
+        if image_node['/Filter'] == '/FlateDecode':
+            img = Image.frombytes(img_color, size, image_node.get_data())
+            filename = obj[1:] + '.png'
+        elif image_node['/Filter'] == '/DCTDecode':
+            # how the fuck am i supposed to know these are inverted? idfk but they are
+            img = Image.frombytes(img_color, size, image_node.get_data(), 'jpeg', img_color, img_color + ';I')
+            filename = obj[1:] + '.jpg'
+        elif image_node['/Filter'] == '/JPXDecode':
+            img = Image.frombytes(img_color, size, image_node.get_data(), 'jpeg2k', img_color, img_color + ';I')
+            filename = obj[1:] + '.jp2'
 
         if args.debug:
             img.show()
@@ -105,10 +114,10 @@ for obj in x_object:
         if img is not None and mask is not None:
             if args.debug:
                 mask.show()
-            if img.mode != "RGB":
-                img = img.convert("RGB")
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
             img.putalpha(mask)
-            solid_color = Image.new("RGBA", size, bg)
+            solid_color = Image.new('RGBA', size, bg)
             try:
                 solid_color.alpha_composite(img)
             except:
@@ -116,9 +125,9 @@ for obj in x_object:
                 print(f'Image {img}')
                 print(f'Solid {solid_color}')
             if bg[3] == 255:
-                img = solid_color.convert("RGB")
+                img = solid_color.convert('RGB')
             else:
-                filename = obj[1:] + ".png"  # only png if the background has non-1 alpha
+                filename = obj[1:] + '.png'  # only png output supported if the background has non-1 alpha
 
         if img is not None:
             img.save(filename)

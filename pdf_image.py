@@ -10,7 +10,7 @@ Extract images from a pdf file, possibly accounting for softmask and compositing
 parser = argparse.ArgumentParser(description='Extract images from a pdf')
 parser.add_argument('page', type=int, help='page number')
 parser.add_argument('-image', type=str, default='all', required=False, help='image name to extract, or "all" to extract all (default)')
-parser.add_argument('-bg', type=int, nargs='+', default=[255], required=False, help='background color if a mask is present (0=black 255=white, or 3 integer R G B)')
+parser.add_argument('-bg', type=int, nargs='+', default=[255], required=False, help='background color if a mask is present. 0=black 255=white, or 3/4 integer R G B (A)')
 parser.add_argument('file', type=str, help='pdf filename')
 parser.add_argument('--debug', action='store_true', help='print pdf node debug information')
 parser.add_argument('--list', action='store_true', help='print list of images on the page instead of extracting images')
@@ -29,6 +29,8 @@ if len(args.bg) == 1:
     bg = (args.bg[0], args.bg[0], args.bg[0], 255)
 elif len(args.bg) == 3:
     bg = tuple(args.bg) + (255, )
+elif len(args.bg) == 4:
+    bg = tuple(args.bg)
 else:
     bg = (255, 255, 255, 255)
 
@@ -113,7 +115,10 @@ for obj in x_object:
                 print(f'Failed for image {obj}')
                 print(f'Image {img}')
                 print(f'Solid {solid_color}')
-            img = solid_color.convert("RGB")
+            if bg[3] == 255:
+                img = solid_color.convert("RGB")
+            else:
+                filename = obj[1:] + ".png"  # only png if the background has non-1 alpha
 
         if img is not None:
             img.save(filename)

@@ -2,7 +2,7 @@
 command-line tool to extract images from a pdf, respecting softmask if present and compositing onto a background color of choice
 
 # Requires
-- Python 3.8+
+- Python 3
 - PyPDF2
 - PIL
 

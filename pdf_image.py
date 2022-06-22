@@ -14,7 +14,7 @@ parser.add_argument('page', type=int, help='page number')
 # optional
 parser.add_argument('-image', type=str, default='all', required=False, help='image name to extract, or "all" to extract all (default)')
 parser.add_argument('-bg', type=int, nargs='+', default=[255], required=False, help='background color if a mask is present. 0=black 255=white, or 3/4 integer R G B (A)')
-parser.add_argument('--debug', action='store_true', help='print pdf node debug information')
+parser.add_argument('--debug', action='store_true', help='print pdf node debug information and show intermediate images')
 parser.add_argument('--list', action='store_true', help='print list of images on the page instead of extracting images')
 parser.add_argument('--interactive', action='store_true', help='Run interactively, prompting whether to save each image on the page')
 
@@ -47,7 +47,7 @@ for obj in x_object:
 
         image_node = x_object[obj]
         if args.debug:
-            print(f'Node: {image_node}')
+            print('Node: {}'.format(image_node))
 
         size = (image_node['/Width'], image_node['/Height'])
 
@@ -55,8 +55,8 @@ for obj in x_object:
         if '/SMask' in image_node:
             mask_node = image_node['/SMask']
             if args.debug:
-                print(f'  MaskNode: {mask_node}')
-                print(f'  MaskColorSpace: {mask_node["/ColorSpace"]}')
+                print('  MaskNode: {}'.format(mask_node))
+                print('  MaskColorSpace: {}'.format(mask_node["/ColorSpace"]))
             if mask_node['/ColorSpace'] == '/DeviceGray':
                 mask_color = 'L'
             else:
@@ -82,7 +82,7 @@ for obj in x_object:
             else:
                 colorspace = '/DeviceRGB'  # uhh idfk
         if args.debug:
-            print(f'ColorSpace: {colorspace}')
+            print('ColorSpace: {}'.format(colorspace))
 
         # Here are the fucking image modes, again poorly documented
         # https://github.com/python-pillow/Pillow/blob/main/src/libImaging/Unpack.c
@@ -123,17 +123,17 @@ for obj in x_object:
             try:
                 solid_color.alpha_composite(img)
             except:
-                print(f'Failed for image {obj}')
-                print(f'Image {img}')
-                print(f'Solid {solid_color}')
+                print('Failed for image {}'.format(obj))
+                print('Image {}'.format(img))
+                print('Solid {}'.format(solid_color))
             if bg[3] == 255:
                 img = solid_color.convert('RGB')
             else:
                 filename = obj[1:] + '.png'  # only png output supported if the background has non-1 alpha
 
         if args.interactive:
-            img.show(filename)
-            if input('Save this image? y/n ').lower() != 'y':
+            img.show(title=filename)
+            if input('Save image {}? y/n '.format(filename)).lower() != 'y':
                 img = None
 
         if img is not None:

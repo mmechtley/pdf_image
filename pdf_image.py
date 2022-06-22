@@ -16,6 +16,7 @@ parser.add_argument('-image', type=str, default='all', required=False, help='ima
 parser.add_argument('-bg', type=int, nargs='+', default=[255], required=False, help='background color if a mask is present. 0=black 255=white, or 3/4 integer R G B (A)')
 parser.add_argument('--debug', action='store_true', help='print pdf node debug information')
 parser.add_argument('--list', action='store_true', help='print list of images on the page instead of extracting images')
+parser.add_argument('--interactive', action='store_true', help='Run interactively, prompting whether to save each image on the page')
 
 args = parser.parse_args()
 
@@ -108,6 +109,7 @@ for obj in x_object:
             img = Image.frombytes(img_color, size, image_node.get_data(), 'jpeg2k', img_color, img_color + ';I')
             filename = obj[1:] + '.jp2'
 
+
         if args.debug:
             img.show()
 
@@ -129,10 +131,15 @@ for obj in x_object:
             else:
                 filename = obj[1:] + '.png'  # only png output supported if the background has non-1 alpha
 
+        if args.interactive:
+            img.show(filename)
+            if input('Save this image? y/n ').lower() != 'y':
+                img = None
+
         if img is not None:
             img.save(filename)
 
 pdf_file.close()
 
 if len(images) > 0:
- print(images)
+  print(images)

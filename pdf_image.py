@@ -48,6 +48,8 @@ for obj in x_object:
         image_node = x_object[obj]
         if args.debug:
             print('Node: {}'.format(image_node))
+            if '/Metadata' in image_node:
+                print('Metadata: {}'.format(image_node['/Metadata']))
 
         size = (image_node['/Width'], image_node['/Height'])
 
@@ -62,11 +64,18 @@ for obj in x_object:
             else:
                 mask_color = None
 
+            if args.debug and '/Metadata' in mask_node:
+                print('  MaskMetadata: {}'.format(mask_node['/Metadata']))
+
             # the additional arguments for specific decoders (jpeg etc) are poorly documented. Best
             # bet is find the relevant method in the PIL decode.c and look for the PyArg_ParseTuple call
             # https://github.com/python-pillow/Pillow/blob/main/src/decode.c
             if mask_color is not None and mask_node['/Filter'] == '/FlateDecode':
-                mask = Image.frombytes(mask_color, size, mask_node.get_data())
+                data = mask_node.get_data()
+                # the fuck?
+                if isinstance(data, str):
+                    data = bytes(data, 'utf_8')
+                mask = Image.frombytes(mask_color, size, data)
             elif mask_color is not None and mask_node['/Filter'] == '/DCTDecode':
                 mask = Image.frombytes(mask_color, size, mask_node.get_data(), 'jpeg', mask_color, mask_color)
             elif mask_color is not None and mask_node['/Filter'] == '/JPXDecode':
@@ -99,7 +108,11 @@ for obj in x_object:
 
         # see note above about frombytes additional args
         if image_node['/Filter'] == '/FlateDecode':
-            img = Image.frombytes(img_color, size, image_node.get_data())
+            data = image_node.get_data()
+            # the fuck?
+            if isinstance(data, str):
+                data = bytes(data, 'utf_8')
+            img = Image.frombytes(img_color, size, data)
             filename = obj[1:] + '.png'
         elif image_node['/Filter'] == '/DCTDecode':
             # how the fuck am i supposed to know these are inverted? idfk but they are
@@ -110,12 +123,12 @@ for obj in x_object:
             filename = obj[1:] + '.jp2'
 
 
-        if args.debug:
-            img.show()
+        if args.debug and mask is not None:
+            img.show('{} color'.format(filename))
 
         if img is not None and mask is not None:
             if args.debug:
-                mask.show()
+                mask.show('{} mask'.format(filename))
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             img.putalpha(mask)

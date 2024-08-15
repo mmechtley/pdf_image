@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import os.path
+import sys
 import PyPDF2
 import argparse
 from PIL import Image
@@ -9,17 +11,22 @@ Extract images from a pdf file, possibly accounting for softmask and compositing
 
 parser = argparse.ArgumentParser(description='Extract images from a pdf')
 # positional
-parser.add_argument('file', type=str, help='pdf filename')
+parser.add_argument('file', type=str, help='pdf filename', default=None)
 # optional
-parser.add_argument('--page', '-p', type=int, default=None, required=False, help='page number, or omit')
-parser.add_argument('--image', '-i', type=str, default=None, required=False, help='image name to extract, or "all" to extract all (default)')
+parser.add_argument('--pages', '-p', type=int, nargs='+', default=None, required=False, help='page number(s)')
+parser.add_argument('--page-range', '-r', type=int, nargs=2, default=None, required=False, help='page range', metavar=('PAGE', 'PAGE'))
+parser.add_argument('--image', '-i', type=str, default=None, required=False, help='image name to extract (default all images)')
 parser.add_argument('--bg', '-b', type=int, nargs='+', default=[0, 0, 0, 0], required=False, help='background color if a mask is present. 0=black 255=white, or 3/4 integer R G B (A)')
 parser.add_argument('--debug', action='store_true', help='print pdf node debug information and show intermediate images')
 parser.add_argument('--list', action='store_true', help='print list of images on the page instead of extracting images')
 parser.add_argument('--interactive', action='store_true', help='Run interactively, prompting whether to save each image on the page')
 
-args = parser.parse_args()
-
+# This lets us use + for nargs on --pages and --bg above
+if len(sys.argv) > 1 and os.path.exists(sys.argv[-1]):
+    args = parser.parse_args(sys.argv[0:-1])
+    args.file = sys.argv[-1]
+else:
+    args = parser.parse_args()
 
 def get_filename(page, node_name, extension):
     return 'Page_' + str(page) + '_' + node_name + extension
@@ -176,10 +183,12 @@ if __name__ == '__main__':
     pdf_file = open(args.file, 'rb')
     pdf_reader = PyPDF2.PdfFileReader(pdf_file)
 
-    if args.page is None:
-        pages = list(range(1, len(pdf_reader.pages)+1))
+    if args.pages is not None:
+        pages = list(args.pages)
+    elif args.page_range is not None:
+        pages = list(range(args.page_range[0], args.page_range[1] + 1))
     else:
-        pages = [args.page]
+        pages = list(range(1, len(pdf_reader.pages)+1))
 
     image_list = []
     for page_number in pages:

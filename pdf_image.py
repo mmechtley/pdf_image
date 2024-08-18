@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os.path
 import sys
+import time
 import PyPDF2
 import argparse
 from PIL import Image
@@ -170,6 +171,26 @@ def extract_from_page(pdf_reader, page_number, image_name, bg):
     return
 
 
+def progressbar(iter, total, prefix="", size=60, start_time=None, out=sys.stdout):
+    iter += 1
+    frac = iter / total
+    pip_num = int(size*frac)
+    # time estimate calculation and string
+    progress_str = f"{prefix}[{u'█'*pip_num}{('.'*(size-pip_num))}] {iter}/{total}"
+    if start_time is not None:
+        remaining = ((time.time() - start_time) / frac) * (1-frac)
+        mins, sec = divmod(remaining, 60) # limited to minutes
+        progress_str += " Est. "
+        if mins > 0:
+            progress_str += f"{int(mins):02}m"
+        else:
+            progress_str += f"{int(sec):02}s"
+
+    print( progress_str, end='\r', file=out, flush=True)
+    if iter >= total:
+        print("\n", flush=True, file=out)
+
+
 if __name__ == '__main__':
     if len(args.bg) == 1:
         bg = (args.bg[0], args.bg[0], args.bg[0], 255)
@@ -191,12 +212,13 @@ if __name__ == '__main__':
         pages = list(range(1, len(pdf_reader.pages)+1))
 
     image_list = []
-    for page_number in pages:
+    start_time = time.time()
+    for iter, page_number in enumerate(pages):
         if args.list:
             image_list += image_list_from_page(pdf_reader, page_number)
-
         else:
             extract_from_page(pdf_reader, page_number, args.image, bg)
+            progressbar(iter, len(pages), " Page Progress ", 50, start_time)
     pdf_file.close()
 
     if len(image_list) > 0:

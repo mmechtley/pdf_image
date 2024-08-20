@@ -98,15 +98,16 @@ def extract_from_page(pdf_reader, page_number, image_name, bg):
                 # the additional arguments for specific decoders (jpeg etc) are poorly documented. Best
                 # bet is find the relevant method in the PIL decode.c and look for the PyArg_ParseTuple call
                 # https://github.com/python-pillow/Pillow/blob/main/src/decode.c
-                if mask_color is not None and mask_node['/Filter'] == '/FlateDecode':
+                mask_format = mask_node['/Filter'] if '/Filter' in mask_node else None
+                if mask_color is not None and mask_format == '/FlateDecode':
                     data = mask_node.get_data()
                     # the fuck?
                     if isinstance(data, str):
                         data = bytes(data, 'utf_8')
                     mask = Image.frombytes(mask_color, size, data)
-                elif mask_color is not None and mask_node['/Filter'] == '/DCTDecode':
+                elif mask_color is not None and mask_format == '/DCTDecode':
                     mask = Image.frombytes(mask_color, size, mask_node.get_data(), 'jpeg', mask_color, mask_color)
-                elif mask_color is not None and mask_node['/Filter'] == '/JPXDecode':
+                elif mask_color is not None and mask_format == '/JPXDecode':
                     mask = Image.frombytes(mask_color, size, mask_node.get_data(), 'jpeg2k', mask_color, mask_color)
 
             # Here are the fucking image modes, again poorly documented
@@ -125,18 +126,19 @@ def extract_from_page(pdf_reader, page_number, image_name, bg):
             filename = ''
 
             # see note above about frombytes additional args
-            if image_node['/Filter'] == '/FlateDecode':
+            img_format = image_node['/Filter'] if '/Filter' in image_node else None
+            if img_format == '/FlateDecode':
                 data = image_node.get_data()
                 # the fuck?
                 if isinstance(data, str):
                     data = bytes(data, 'utf_8')
                 img = Image.frombytes(img_color, size, data)
                 filename = get_filename(page_number, obj[1:], '.png')
-            elif image_node['/Filter'] == '/DCTDecode':
+            elif img_format == '/DCTDecode':
                 # how the fuck am i supposed to know these are inverted? idfk but they are
                 img = Image.frombytes(img_color, size, image_node.get_data(), 'jpeg', img_color, img_color + ';I')
                 filename = get_filename(page_number, obj[1:], '.jpg')
-            elif image_node['/Filter'] == '/JPXDecode':
+            elif img_format == '/JPXDecode':
                 img = Image.frombytes(img_color, size, image_node.get_data(), 'jpeg2k', img_color, img_color + ';I')
                 filename = get_filename(page_number, obj[1:], '.jp2')
 

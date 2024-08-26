@@ -3,6 +3,7 @@ import os.path
 import sys
 import time
 import PyPDF2
+from PyPDF2.generic import DictionaryObject
 import argparse
 from PIL import Image
 
@@ -36,140 +37,148 @@ def get_filename(page, node_name, extension):
 def image_list_from_page(pdf_reader, page_number):
     image_list = []
     page = pdf_reader.pages[page_number - 1]
-    x_object = page['/Resources']['/XObject'].get_object()
-    list_mode = args.list
 
-    for obj in x_object:
-        if x_object[obj]['/Subtype'] == '/Image':
-            if list_mode:
-                image_list += [get_filename(page_number, obj[1:], '')]
+    for name, img in iter_images(page):
+        image_list += [get_filename(page_number, name, '')]
     return image_list
+
+def iter_images( node ):
+    for key in node:
+        if not isinstance(node[key], DictionaryObject ):
+            continue
+
+        if '/Subtype' in node[key] and node[key]['/Subtype'] == '/Image':
+            yield (key[1:], node[key])
+        else:
+            for (name, img) in iter_images(node[key]):
+                yield (name, img)
 
 
 def extract_from_page(pdf_reader, page_number, image_name, bg):
     page = pdf_reader.pages[page_number - 1]
-    x_object = page['/Resources']['/XObject'].get_object()
 
-    for obj in x_object:
-        if x_object[obj]['/Subtype'] == '/Image':
-            if image_name is not None and obj[1:] != image_name:
-                continue
+    for img_num, (node_name, image_node) in enumerate(iter_images(page)):
+        if image_name is not None and node_name != image_name:
+            continue
+        # The same name is sometimes used twice on the same page, so just use our own scheme
+        node_name = 'Im'+str(img_num)
 
-            image_node = x_object[obj]
-            colorspace = image_node['/ColorSpace']
-            # for icc color profiles use whatever the 'alternate' is set to
-            # rather than trying to decode icc
-            if '/ICCBased' in colorspace:
-                colorspace = colorspace[1].get_object()
-                if '/Alternate' in colorspace:
-                    colorspace = colorspace['/Alternate']
-                else:
-                    colorspace = '/DeviceRGB'  # uhh idfk
-
-            if args.debug:
-                print('-'*80)
-                print('Node: {}'.format(image_node))
-                print('ColorSpace: {}'.format(colorspace))
-                if '/Metadata' in image_node:
-                    print('Metadata:')
-                    print('>'*80)
-                    print(image_node['/Metadata'].get_data().decode())
-                    print('<'*80)
-
-            size = (image_node['/Width'], image_node['/Height'])
-
-            mask = None
-            if '/SMask' in image_node:
-                mask_node = image_node['/SMask']
-                if args.debug:
-                    print('MaskNode: {}'.format(mask_node))
-                    print('MaskColorSpace: {}'.format(mask_node["/ColorSpace"]))
-                if mask_node['/ColorSpace'] == '/DeviceGray':
-                    mask_color = 'L'
-                else:
-                    mask_color = None
-
-                if args.debug and '/Metadata' in mask_node:
-                    print('MaskMetadata:')
-                    print('>'*80)
-                    print(mask_node['/Metadata'].get_data().decode())
-                    print('<'*80)
-
-                # the additional arguments for specific decoders (jpeg etc) are poorly documented. Best
-                # bet is find the relevant method in the PIL decode.c and look for the PyArg_ParseTuple call
-                # https://github.com/python-pillow/Pillow/blob/main/src/decode.c
-                mask_format = mask_node['/Filter'] if '/Filter' in mask_node else None
-                if mask_color is not None and mask_format == '/FlateDecode':
-                    data = mask_node.get_data()
-                    # the fuck?
-                    if isinstance(data, str):
-                        data = bytes(data, 'utf_8')
-                    mask = Image.frombytes(mask_color, size, data)
-                elif mask_color is not None and mask_format == '/DCTDecode':
-                    mask = Image.frombytes(mask_color, size, mask_node.get_data(), 'jpeg', mask_color, mask_color)
-                elif mask_color is not None and mask_format == '/JPXDecode':
-                    mask = Image.frombytes(mask_color, size, mask_node.get_data(), 'jpeg2k', mask_color, mask_color)
-
-            # Here are the fucking image modes, again poorly documented
-            # https://github.com/python-pillow/Pillow/blob/main/src/libImaging/Unpack.c
-            if colorspace == '/DeviceRGB':
-                img_color = 'RGB'
-            elif colorspace == '/DeviceCMYK':
-                img_color = 'CMYK'
-            elif '/Indexed' in colorspace:
-                # png, palettized
-                img_color = 'P'
+        colorspace = image_node['/ColorSpace']
+        # for icc color profiles use whatever the 'alternate' is set to
+        # rather than trying to decode icc
+        if '/ICCBased' in colorspace:
+            colorspace = colorspace[1].get_object()
+            if '/Alternate' in colorspace:
+                colorspace = colorspace['/Alternate']
             else:
-                img_color = 'RGB'  # uhhh sure
+                colorspace = '/DeviceRGB'  # uhh idfk
 
-            img = None
-            filename = ''
+        if args.debug:
+            print('-'*80)
+            print('Node: {}'.format(image_node))
+            print('ColorSpace: {}'.format(colorspace))
+            if '/Metadata' in image_node:
+                print('Metadata:')
+                print('>'*80)
+                print(image_node['/Metadata'].get_data().decode())
+                print('<'*80)
 
-            # see note above about frombytes additional args
-            img_format = image_node['/Filter'] if '/Filter' in image_node else None
-            if img_format == '/FlateDecode':
-                data = image_node.get_data()
+        size = (image_node['/Width'], image_node['/Height'])
+
+        mask = None
+        if '/SMask' in image_node:
+            mask_node = image_node['/SMask']
+            if args.debug:
+                print('MaskNode: {}'.format(mask_node))
+                print('MaskColorSpace: {}'.format(mask_node["/ColorSpace"]))
+            if mask_node['/ColorSpace'] == '/DeviceGray':
+                mask_color = 'L'
+            else:
+                mask_color = None
+
+            if args.debug and '/Metadata' in mask_node:
+                print('MaskMetadata:')
+                print('>'*80)
+                print(mask_node['/Metadata'].get_data().decode())
+                print('<'*80)
+
+            # the additional arguments for specific decoders (jpeg etc) are poorly documented. Best
+            # bet is find the relevant method in the PIL decode.c and look for the PyArg_ParseTuple call
+            # https://github.com/python-pillow/Pillow/blob/main/src/decode.c
+            mask_format = mask_node['/Filter'] if '/Filter' in mask_node else None
+            if mask_color is not None and mask_format == '/FlateDecode':
+                data = mask_node.get_data()
                 # the fuck?
                 if isinstance(data, str):
                     data = bytes(data, 'utf_8')
-                img = Image.frombytes(img_color, size, data)
-                filename = get_filename(page_number, obj[1:], '.png')
-            elif img_format == '/DCTDecode':
-                # how the fuck am i supposed to know these are inverted? idfk but they are
-                img = Image.frombytes(img_color, size, image_node.get_data(), 'jpeg', img_color, img_color + ';I')
-                filename = get_filename(page_number, obj[1:], '.jpg')
-            elif img_format == '/JPXDecode':
-                img = Image.frombytes(img_color, size, image_node.get_data(), 'jpeg2k', img_color, img_color + ';I')
-                filename = get_filename(page_number, obj[1:], '.jp2')
+                mask = Image.frombytes(mask_color, size, data)
+            elif mask_color is not None and mask_format == '/DCTDecode':
+                mask = Image.frombytes(mask_color, size, mask_node.get_data(), 'jpeg', mask_color, mask_color)
+            elif mask_color is not None and mask_format == '/JPXDecode':
+                mask = Image.frombytes(mask_color, size, mask_node.get_data(), 'jpeg2k', mask_color, mask_color)
 
-            if args.debug and mask is not None:
-                img.show('{} color'.format(filename))
+        # Here are the fucking image modes, again poorly documented
+        # https://github.com/python-pillow/Pillow/blob/main/src/libImaging/Unpack.c
+        if colorspace == '/DeviceRGB':
+            img_color = 'RGB'
+        elif colorspace == '/DeviceCMYK':
+            img_color = 'CMYK'
+        elif colorspace == '/DeviceGray':
+            img_color = 'L'
+        elif '/Indexed' in colorspace:
+            # png, palettized
+            img_color = 'P'
+        else:
+            img_color = 'RGB'  # uhhh sure
 
-            if img is not None and mask is not None:
-                if args.debug:
-                    mask.show('{} mask'.format(filename))
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                img.putalpha(mask)
-                solid_color = Image.new('RGBA', size, bg)
-                try:
-                    solid_color.alpha_composite(img)
-                except:
-                    print('Failed for image {}'.format(obj))
-                    print('Image {}'.format(img))
-                    print('Solid {}'.format(solid_color))
-                if bg[3] == 255:
-                    img = solid_color.convert('RGB')
-                else:
-                    filename = get_filename(page_number, obj[1:], '.png')  # only png output supported if the background has non-1 alpha
+        img = None
+        filename = ''
 
-            if args.interactive:
-                img.show(title=filename)
-                if input('Save image {}? y/n '.format(filename)).lower() != 'y':
-                    img = None
+        # see note above about frombytes additional args
+        img_format = image_node['/Filter'] if '/Filter' in image_node else None
+        if img_format == '/FlateDecode':
+            data = image_node.get_data()
+            # the fuck?
+            if isinstance(data, str):
+                data = bytes(data, 'utf_8')
+            img = Image.frombytes(img_color, size, data)
+            filename = get_filename(page_number, node_name, '.png')
+        elif img_format == '/DCTDecode':
+            # how the fuck am i supposed to know these are inverted? idfk but they are
+            img = Image.frombytes(img_color, size, image_node.get_data(), 'jpeg', img_color, img_color + ';I')
+            filename = get_filename(page_number, node_name, '.jpg')
+        elif img_format == '/JPXDecode':
+            img = Image.frombytes(img_color, size, image_node.get_data(), 'jpeg2k', img_color, img_color + ';I')
+            filename = get_filename(page_number, node_name, '.jp2')
 
-            if img is not None:
-                img.save(filename)
+        if args.debug and mask is not None:
+            img.show('{} color'.format(filename))
+
+        if img is not None and mask is not None:
+            if args.debug:
+                mask.show('{} mask'.format(filename))
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            img.putalpha(mask)
+            solid_color = Image.new('RGBA', size, bg)
+            try:
+                solid_color.alpha_composite(img)
+            except:
+                print('Failed for image {}'.format(node_name))
+                print('Image {}'.format(img))
+                print('Solid {}'.format(solid_color))
+            if bg[3] == 255:
+                img = solid_color.convert('RGB')
+            else:
+                filename = get_filename(page_number, node_name, '.png')  # only png output supported if the background has non-1 alpha
+
+        if args.interactive:
+            img.show(title=filename)
+            if input('Save image {}? y/n '.format(filename)).lower() != 'y':
+                img = None
+
+        if img is not None:
+            img.save(filename)
     return
 
 

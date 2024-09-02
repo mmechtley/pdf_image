@@ -2,10 +2,8 @@
 import os.path
 import sys
 import time
-import PyPDF2
-from PyPDF2.generic import DictionaryObject
 import argparse
-from PIL import Image
+from pypdf import PdfReader
 
 '''
 Extract images from a pdf file, possibly accounting for softmask and compositing onto a background color
@@ -18,10 +16,7 @@ parser.add_argument('file', type=str, help='pdf filename', default=None)
 parser.add_argument('--pages', '-p', type=int, nargs='+', default=None, required=False, help='page number(s)')
 parser.add_argument('--page-range', '-r', type=int, nargs=2, default=None, required=False, help='page range', metavar=('PAGE', 'PAGE'))
 parser.add_argument('--image', '-i', type=str, default=None, required=False, help='image name to extract (default all images)')
-parser.add_argument('--bg', '-b', type=int, nargs='+', default=[0, 0, 0, 0], required=False, help='background color if a mask is present. 0=black 255=white, or 3/4 integer R G B (A)')
-parser.add_argument('--debug', action='store_true', help='print pdf node debug information and show intermediate images')
 parser.add_argument('--list', action='store_true', help='print list of images on the page instead of extracting images')
-parser.add_argument('--interactive', action='store_true', help='Run interactively, prompting whether to save each image on the page')
 
 # This lets us use + for nargs on --pages and --bg above
 if len(sys.argv) > 1 and os.path.exists(sys.argv[-1]):
@@ -30,208 +25,70 @@ if len(sys.argv) > 1 and os.path.exists(sys.argv[-1]):
 else:
     args = parser.parse_args()
 
-def get_filename(page, node_name, extension):
-    return 'Page_' + str(page) + '_' + node_name + extension
+def get_filename( page:int, node_name:str, extension:str ):
+    return 'Page_' + str( page ) + '_' + node_name + extension
 
 
-def image_list_from_page(pdf_reader, page_number):
+def image_list_from_page( pdf_reader:PdfReader, page_number:int ):
     image_list = []
     page = pdf_reader.pages[page_number - 1]
 
-    for name, img in iter_images(page):
-        image_list += [get_filename(page_number, name, '')]
+    for img in page.images:
+        image_list += [get_filename( page_number, img.name, '' )]
     return image_list
 
-def iter_images( node ):
-    for key in node:
-        if not isinstance(node[key], DictionaryObject ):
-            continue
 
-        if '/Subtype' in node[key] and node[key]['/Subtype'] == '/Image':
-            yield (key[1:], node[key])
-        else:
-            for (name, img) in iter_images(node[key]):
-                yield (name, img)
-
-
-def extract_from_page(pdf_reader, page_number, image_name, bg):
+def extract_from_page( pdf_reader:PdfReader, page_number:int, image_name:str ):
     page = pdf_reader.pages[page_number - 1]
 
-    for img_num, (node_name, image_node) in enumerate(iter_images(page)):
-        if image_name is not None and node_name != image_name:
+    for img in page.images:
+        if image_name is not None and img.name != image_name:
             continue
-        # The same name is sometimes used twice on the same page, so just use our own scheme
-        node_name = 'Im'+str(img_num)
-
-        colorspace = image_node['/ColorSpace']
-        # for icc color profiles use whatever the 'alternate' is set to
-        # rather than trying to decode icc
-        if '/ICCBased' in colorspace:
-            colorspace = colorspace[1].get_object()
-            if '/Alternate' in colorspace:
-                colorspace = colorspace['/Alternate']
-            else:
-                colorspace = '/DeviceRGB'  # uhh idfk
-
-        if args.debug:
-            print('-'*80)
-            print('Node: {}'.format(image_node))
-            print('ColorSpace: {}'.format(colorspace))
-            if '/Metadata' in image_node:
-                print('Metadata:')
-                print('>'*80)
-                print(image_node['/Metadata'].get_data().decode())
-                print('<'*80)
-
-        size = (image_node['/Width'], image_node['/Height'])
-
-        mask = None
-        if '/SMask' in image_node:
-            mask_node = image_node['/SMask']
-            if args.debug:
-                print('MaskNode: {}'.format(mask_node))
-                print('MaskColorSpace: {}'.format(mask_node["/ColorSpace"]))
-            if mask_node['/ColorSpace'] == '/DeviceGray':
-                mask_color = 'L'
-            else:
-                mask_color = None
-
-            if args.debug and '/Metadata' in mask_node:
-                print('MaskMetadata:')
-                print('>'*80)
-                print(mask_node['/Metadata'].get_data().decode())
-                print('<'*80)
-
-            # the additional arguments for specific decoders (jpeg etc) are poorly documented. Best
-            # bet is find the relevant method in the PIL decode.c and look for the PyArg_ParseTuple call
-            # https://github.com/python-pillow/Pillow/blob/main/src/decode.c
-            mask_format = mask_node['/Filter'] if '/Filter' in mask_node else None
-            if mask_color is not None and mask_format == '/FlateDecode':
-                data = mask_node.get_data()
-                # the fuck?
-                if isinstance(data, str):
-                    data = bytes(data, 'utf_8')
-                mask = Image.frombytes(mask_color, size, data)
-            elif mask_color is not None and mask_format == '/DCTDecode':
-                mask = Image.frombytes(mask_color, size, mask_node.get_data(), 'jpeg', mask_color, mask_color)
-            elif mask_color is not None and mask_format == '/JPXDecode':
-                mask = Image.frombytes(mask_color, size, mask_node.get_data(), 'jpeg2k', mask_color, mask_color)
-
-        # Here are the fucking image modes, again poorly documented
-        # https://github.com/python-pillow/Pillow/blob/main/src/libImaging/Unpack.c
-        if colorspace == '/DeviceRGB':
-            img_color = 'RGB'
-        elif colorspace == '/DeviceCMYK':
-            img_color = 'CMYK'
-        elif colorspace == '/DeviceGray':
-            img_color = 'L'
-        elif '/Indexed' in colorspace:
-            # png, palettized
-            img_color = 'P'
-        else:
-            img_color = 'RGB'  # uhhh sure
-
-        img = None
-        filename = ''
-
-        # see note above about frombytes additional args
-        img_format = image_node['/Filter'] if '/Filter' in image_node else None
-        if img_format == '/FlateDecode':
-            data = image_node.get_data()
-            # the fuck?
-            if isinstance(data, str):
-                data = bytes(data, 'utf_8')
-            img = Image.frombytes(img_color, size, data)
-            filename = get_filename(page_number, node_name, '.png')
-        elif img_format == '/DCTDecode':
-            # how the fuck am i supposed to know these are inverted? idfk but they are
-            img = Image.frombytes(img_color, size, image_node.get_data(), 'jpeg', img_color, img_color + ';I')
-            filename = get_filename(page_number, node_name, '.jpg')
-        elif img_format == '/JPXDecode':
-            img = Image.frombytes(img_color, size, image_node.get_data(), 'jpeg2k', img_color, img_color + ';I')
-            filename = get_filename(page_number, node_name, '.jp2')
-
-        if args.debug and mask is not None:
-            img.show('{} color'.format(filename))
-
-        if img is not None and mask is not None:
-            if args.debug:
-                mask.show('{} mask'.format(filename))
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-            img.putalpha(mask)
-            solid_color = Image.new('RGBA', size, bg)
-            try:
-                solid_color.alpha_composite(img)
-            except:
-                print('Failed for image {}'.format(node_name))
-                print('Image {}'.format(img))
-                print('Solid {}'.format(solid_color))
-            if bg[3] == 255:
-                img = solid_color.convert('RGB')
-            else:
-                filename = get_filename(page_number, node_name, '.png')  # only png output supported if the background has non-1 alpha
-
-        if args.interactive:
-            img.show(title=filename)
-            if input('Save image {}? y/n '.format(filename)).lower() != 'y':
-                img = None
-
-        if img is not None:
-            img.save(filename)
+        filename = get_filename( page_number, img.name, '' )
+        with( open( filename, 'wb' ) ) as out_file:
+            out_file.write( img.data )
     return
 
 
-def progressbar(iter, total, prefix="", size=60, start_time=None, out=sys.stdout):
+def progressbar( iter, total, prefix="", size=60, start_time=None, out=sys.stdout ):
     iter += 1
     frac = iter / total
-    pip_num = int(size*frac)
+    pip_num = int( size * frac )
     # time estimate calculation and string
-    progress_str = f"{prefix}[{u'█'*pip_num}{('.'*(size-pip_num))}] {iter}/{total}"
+    progress_str = f"{prefix}[{u'█' * pip_num}{( '.' * ( size - pip_num ) )}] {iter}/{total}"
     if start_time is not None:
-        remaining = ((time.time() - start_time) / frac) * (1-frac)
-        mins, sec = divmod(remaining, 60) # limited to minutes
+        remaining = ( ( time.time() - start_time) / frac ) * ( 1-frac )
+        mins, sec = divmod( remaining, 60 ) # limited to minutes
         progress_str += " Est. "
         if mins > 0:
-            progress_str += f"{int(mins):02}m"
+            progress_str += f"{int( mins ):02}m"
         else:
-            progress_str += f"{int(sec):02}s"
+            progress_str += f"{int( sec ):02}s"
 
-    print( progress_str, end='\r', file=out, flush=True)
+    print( progress_str, end='\r', file=out, flush=True )
     if iter >= total:
-        print("\n", flush=True, file=out)
+        print( "\n", flush=True, file=out )
 
 
 if __name__ == '__main__':
-    if len(args.bg) == 1:
-        bg = (args.bg[0], args.bg[0], args.bg[0], 255)
-    elif len(args.bg) == 3:
-        bg = tuple(args.bg) + (255,)
-    elif len(args.bg) == 4:
-        bg = tuple(args.bg)
-    else:
-        bg = (0, 0, 0, 0)
-
-    pdf_file = open(args.file, 'rb')
-    pdf_reader = PyPDF2.PdfFileReader(pdf_file)
+    pdf_reader = PdfReader( args.file )
 
     if args.pages is not None:
-        pages = list(args.pages)
+        pages = list( args.pages )
     elif args.page_range is not None:
-        pages = list(range(args.page_range[0], args.page_range[1] + 1))
+        pages = list( range( args.page_range[0], args.page_range[1] + 1 ) )
     else:
-        pages = list(range(1, len(pdf_reader.pages)+1))
+        pages = list( range( 1, len( pdf_reader.pages ) + 1 ) )
 
     image_list = []
     start_time = time.time()
-    for iter, page_number in enumerate(pages):
+    for iter, page_number in enumerate( pages ):
         if args.list:
-            image_list += image_list_from_page(pdf_reader, page_number)
+            image_list += image_list_from_page( pdf_reader, page_number )
         else:
-            extract_from_page(pdf_reader, page_number, args.image, bg)
-            progressbar(iter, len(pages), " Page Progress ", 50, start_time)
-    pdf_file.close()
+            extract_from_page( pdf_reader, page_number, args.image )
+            progressbar( iter, len( pages ), " Page Progress ", 50, start_time )
 
-    if len(image_list) > 0:
-        print(image_list)
-        print(str(len(image_list)) + ' items on ' + str(len(pages)) + ' pages')
+    if len( image_list ) > 0:
+        print( image_list )
+        print( str( len( image_list ) ) + ' items on ' + str( len( pages ) ) + ' pages')
